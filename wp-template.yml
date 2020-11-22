@@ -1,0 +1,716 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  DBUsername:
+    Type: String
+    NoEcho: true
+    Description: The wordpress db username
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: The wordpress db password
+  DBName:
+    Type: String
+    NoEcho: true
+    Description: The wordpress db name
+  WordpressKeys:
+    Type: CommaDelimitedList
+    NoEcho: true
+    Description: >-
+      List of exactly 8, comma seperated, randomly generated, 64 byte
+      authentication keys. Changing these will log users out.
+  DockerImage:
+    Type: String
+    Description: The wordpress docker image
+  Domain:
+    Type: String
+    Description: The domain portion of the FQDN. eg. example.com
+  FQDN:
+    Type: String
+    Description: >-
+      The fully qualified domain name. This might just be the domain if you
+      aren't using a subdomain for the FQDN.
+  AlternativeNames:
+    Type: CommaDelimitedList
+    Description: >-
+      A list of exactly 2 comma seperated alternative names to re-direct to the
+      FQDN. eg. www.example.com,dev.example.com
+  LoadBalancerDomain:
+    Type: String
+    Description: The FQDN of the load balancer
+  IngressCertificate:
+    Type: String
+    Description: Certificate arn of the cloudfront endpoint (must be in us-east-1 region)
+  LoadBalancerCertificate:
+    Type: String
+    Description: Certificate arn of load balancer endpoint
+  Cpu:
+    Type: String
+    Description: >-
+      https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-taskdefinition.html#cfn-ecs-taskdefinition-cpu
+    Default: 256
+  Memory:
+    Type: String
+    Description: >-
+      https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-taskdefinition.html#cfn-ecs-taskdefinition-memory
+    Default: 512
+  ContainerName:
+    Type: String
+    Default: wordpress
+  ContainerPort:
+    Type: Number
+    Default: 80
+  HealthCheckPath:
+    Type: String
+    Default: /
+  DesiredCount:
+    Type: Number
+    Default: 1
+  MinContainers:
+    Type: Number
+    Default: 1
+  MaxContainers:
+    Type: Number
+    Default: 2
+  AutoScalingTargetValue:
+    Type: Number
+    Default: 50
+  WpContentVolumeName:
+    Type: String
+    Default: WpContentVolume
+  AccessPointUser:
+    Type: String
+    Description: 'Posix uid:gid pair for access point owner'
+    Default: '33:33'
+  DBInstanceClass:
+    Type: String
+    Description: The compute and memory capacity of the DB instance
+    Default: db.t3.micro
+    AllowedValues:
+      - db.m6g.16xlarge
+      - db.m6g.12xlarge
+      - db.m6g.8xlarge
+      - db.m6g.4xlarge
+      - db.m6g.2xlarge
+      - db.m6g.xlarge
+      - db.m6g.large
+      - db.m5.24xlarge
+      - db.m5.16xlarge
+      - db.m5.12xlarge
+      - db.m5.8xlarge
+      - db.m5.4xlarge
+      - db.m5.2xlarge
+      - db.m5.xlarge
+      - db.m5.large
+      - db.m5.large
+      - db.m4.10xlarge
+      - db.m4.4xlarge
+      - db.m4.2xlarge
+      - db.m4.xlarge
+      - db.m4.large
+      - db.r6g.16xlarge
+      - db.r6g.12xlarge
+      - db.r6g.4xlarge
+      - db.r6g.2xlarge
+      - db.r6g.xlarge
+      - db.r6g.large
+      - db.r5.24xlarge
+      - db.r5.16xlarge
+      - db.r5.12xlarge
+      - db.r5.8xlarge
+      - db.r5.4xlarge
+      - db.r5.2xlarge
+      - db.r5.xlarge
+      - db.r5.large
+      - db.r4.16xlarge
+      - db.r4.8xlarge
+      - db.r4.4xlarge
+      - db.r4.2xlarge
+      - db.r4.xlarge
+      - db.r4.large
+      - db.r3.8xlarge
+      - db.r3.4xlarge
+      - db.r3.2xlarge
+      - db.r3.xlarge
+      - db.r3.large
+      - db.t3.2xlarge
+      - db.t3.xlarge
+      - db.t3.large
+      - db.t3.medium
+      - db.t3.small
+      - db.t3.micro
+      - db.t2.2xlarge
+      - db.t2.xlarge
+      - db.t2.large
+      - db.t2.medium
+      - db.t2.small
+      - db.t2.micro
+  AllocatedStorage:
+    Type: Number
+    Description: Database allocated storage in gigabytes
+    Default: 20
+    MinValue: 20
+    MaxValue: 65536
+Resources:
+  Distribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Aliases: !Split 
+          - ','
+          - !Sub 
+            - '${Primary},${Aliases}'
+            - Primary: !Ref FQDN
+              Aliases: !Join 
+                - ','
+                - !Ref AlternativeNames
+        Origins:
+          - CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+            DomainName: !Ref LoadBalancerDomain
+            Id: !Ref LoadBalancer
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: false
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          SslSupportMethod: sni-only
+          AcmCertificateArn: !Ref IngressCertificate
+          MinimumProtocolVersion: TLSv1.2_2018
+        CacheBehaviors:
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            PathPattern: /wp-content/*
+            TargetOriginId: !Ref LoadBalancer
+            ViewerProtocolPolicy: redirect-to-https
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            PathPattern: /wp-includes/*
+            TargetOriginId: !Ref LoadBalancer
+            ViewerProtocolPolicy: redirect-to-https
+        DefaultCacheBehavior:
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          TargetOriginId: !Ref LoadBalancer
+          ViewerProtocolPolicy: redirect-to-https
+  Cluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties: {}
+  TaskDefinition:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !GetAtt 
+        - ExecutionRole
+        - Arn
+      TaskRoleArn: !GetAtt 
+        - TaskRole
+        - Arn
+      Volumes:
+        - Name: !Ref WpContentVolumeName
+          EFSVolumeConfiguration:
+            AuthorizationConfig:
+              AccessPointId: !Ref AccessPoint
+              IAM: ENABLED
+            FilesystemId: !Ref EFS
+            TransitEncryption: ENABLED
+            RootDirectory: /
+      ContainerDefinitions:
+        - Image: !Ref DockerImage
+          Name: !Ref ContainerName
+          Environment:
+            - Name: WORDPRESS_DB_NAME
+              Value: !Ref DBName
+            - Name: WORDPRESS_DB_USER
+              Value: !Ref DBUsername
+            - Name: WORDPRESS_DB_PASSWORD
+              Value: !Ref DBPassword
+            - Name: WORDPRESS_DB_HOST
+              Value: !GetAtt 
+                - DBInstance
+                - Endpoint.Address
+            - Name: WORDPRESS_AUTH_KEY
+              Value: !Select 
+                - 0
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_SECURE_AUTH_KEY
+              Value: !Select 
+                - 1
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_LOGGED_IN_KEY
+              Value: !Select 
+                - 2
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_NONCE_KEY
+              Value: !Select 
+                - 3
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_AUTH_SALT
+              Value: !Select 
+                - 4
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_SECURE_AUTH_SALT
+              Value: !Select 
+                - 5
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_LOGGED_IN_SALT
+              Value: !Select 
+                - 6
+                - !Ref WordpressKeys
+            - Name: WORDPRESS_NONCE_SALT
+              Value: !Select 
+                - 7
+                - !Ref WordpressKeys
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          MountPoints:
+            - ContainerPath: /var/www/html/wp-content/
+              SourceVolume: !Ref WpContentVolumeName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+  EFS:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+  AccessPoint:
+    Type: 'AWS::EFS::AccessPoint'
+    Properties:
+      ClientToken: 0
+      FileSystemId: !Ref EFS
+      RootDirectory:
+        Path: /wp-content
+        CreationInfo:
+          Permissions: 755
+          OwnerUid: !Select 
+            - 0
+            - !Split 
+              - ':'
+              - !Ref AccessPointUser
+          OwnerGid: !Select 
+            - 1
+            - !Split 
+              - ':'
+              - !Ref AccessPointUser
+  MountTargetA:
+    Type: 'AWS::EFS::MountTarget'
+    Properties:
+      FileSystemId: !Ref EFS
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+      SubnetId: !Ref SubnetA
+  MountTargetB:
+    Type: 'AWS::EFS::MountTarget'
+    Properties:
+      FileSystemId: !Ref EFS
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+      SubnetId: !Ref SubnetB
+  MountTargetSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Mount target security group
+      VpcId: !Ref VPC
+  MountTargetSecurityGroupIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref MountTargetSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ContainerSecurityGroup
+  ExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+  TaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Policies:
+        - PolicyName: TaskPolicyAccessPoint
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'elasticfilesystem:ClientMount'
+                  - 'elasticfilesystem:ClientWrite'
+                  - 'elasticfilesystem:ClientRootAccess'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - AccessPoint
+                  - Arn
+        - PolicyName: TaskPolicyFileSystem
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'elasticfilesystem:ClientMount'
+                  - 'elasticfilesystem:ClientWrite'
+                  - 'elasticfilesystem:ClientRootAccess'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - EFS
+                  - Arn
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+  AutoScalingRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - >-
+          arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole
+  ContainerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Container security group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref GlobalLoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref RegionalLoadBalancerSecurityGroup
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref MountTargetSecurityGroup
+  GlobalLoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Ingress from cloudfront global endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  RegionalLoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Ingress from cloudfront regional endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  Service:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      PlatformVersion: 1.4.0
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 30
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref SubnetA
+            - !Ref SubnetB
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+      LoadBalancers:
+        - ContainerPort: !Ref ContainerPort
+          ContainerName: !Ref ContainerName
+          TargetGroupArn: !Ref TargetGroup
+  TargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 60
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckTimeoutSeconds: 5
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      TargetType: ip
+      VpcId: !Ref VPC
+  ListenerHTTPS:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      Certificates:
+        - CertificateArn: !Ref LoadBalancerCertificate
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref GlobalLoadBalancerSecurityGroup
+        - !Ref RegionalLoadBalancerSecurityGroup
+      Subnets:
+        - !Ref SubnetA
+        - !Ref SubnetB
+  DNSRecord:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneName: !Sub '${Domain}.'
+      RecordSets:
+        - Name: !Ref FQDN
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt 
+              - Distribution
+              - DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Ref LoadBalancerDomain
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt 
+              - LoadBalancer
+              - DNSName
+            HostedZoneId: !GetAtt 
+              - LoadBalancer
+              - CanonicalHostedZoneID
+        - Name: !Select 
+            - 0
+            - !Ref AlternativeNames
+          ResourceRecords:
+            - !Ref FQDN
+          TTL: 300
+          Type: CNAME
+        - Name: !Select 
+            - 1
+            - !Ref AlternativeNames
+          ResourceRecords:
+            - !Ref FQDN
+          TTL: 300
+          Type: CNAME
+  LogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties: {}
+  AutoScalingTarget:
+    Type: 'AWS::ApplicationAutoScaling::ScalableTarget'
+    Properties:
+      MinCapacity: !Ref MinContainers
+      MaxCapacity: !Ref MaxContainers
+      ResourceId: !Join 
+        - /
+        - - service
+          - !Ref Cluster
+          - !GetAtt 
+            - Service
+            - Name
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ServiceNamespace: ecs
+      RoleARN: !GetAtt 
+        - AutoScalingRole
+        - Arn
+  AutoScalingPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Join 
+        - ''
+        - - !GetAtt 
+            - Service
+            - Name
+          - AutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        TargetValue: !Ref AutoScalingTargetValue
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  SubnetA:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      MapPublicIpOnLaunch: false
+      CidrBlock: 10.0.0.0/24
+  SubnetB:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select 
+        - 1
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      MapPublicIpOnLaunch: false
+      CidrBlock: 10.0.1.0/24
+  DBInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      AllocatedStorage: !Ref AllocatedStorage
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBInstanceClass: !Ref DBInstanceClass
+      StorageType: gp2
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      Engine: mariadb
+      EngineVersion: 10.4.13
+      Port: 3306
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: DBSubnetGroup
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  RouteTableA:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+  RouteTableB:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+  RouteA:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  RouteB:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  RouteTableAAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTableA
+      SubnetId: !Ref SubnetA
+  RouteTableBAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTableB
+      SubnetId: !Ref SubnetB
+  DBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Ingress from Fargate tasks
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          SourceSecurityGroupId: !GetAtt 
+            - ContainerSecurityGroup
+            - GroupId
+Outputs:
+  ClusterName:
+    Description: Name of the cluster
+    Value: !Ref Cluster
+  ServiceName:
+    Description: Name of the service
+    Value: !GetAtt 
+      - Service
+      - Name
+  DistributionId:
+    Description: Cloudfront Distribution
+    Value: !Ref Distribution
+  SecurityGroupsRegion:
+    Description: Region the security groups were created in.
+    Value: !Ref 'AWS::Region'
+  GlobalSecurityGroupId:
+    Description: Global security group id
+    Value: !GetAtt 
+      - GlobalLoadBalancerSecurityGroup
+      - GroupId
+  RegionalSecurityGroupId:
+    Description: Regional security group id
+    Value: !GetAtt 
+      - RegionalLoadBalancerSecurityGroup
+      - GroupId

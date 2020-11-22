@@ -1,0 +1,74 @@
+variables:
+  ECR_URL: <account-id>.dkr.ecr.<region>.amazonaws.com
+  IMAGE_NAME: example.com
+  INGRESS_CERTIFICATE_STACK_NAME: example-com-ingress-cert
+  LOAD_BALANCER_CERTIFICATE_STACK_NAME: example-com-lb-cert
+  WP_STACK_NAME: example-com-wp
+  LAMBDA_STACK_NAME: example-com-lambda
+  DOMAIN: example.com
+  FQDN: example.com
+  ALTERNATIVE_NAMES: www.example.com,dev.example.com
+  AWS_DEFAULT_REGION: <region>
+
+stages:
+  - deploy-certs
+  - package
+  - deploy-wp
+  - deploy-lambda
+
+deploy-certs:
+  when: manual
+  image: python:latest
+  stage: deploy-certs
+  script:
+    - pip install awscli
+    - aws cloudformation deploy --no-fail-on-empty-changeset --template load-balancer-certificate-template.yml --stack-name "$LOAD_BALANCER_CERTIFICATE_STACK_NAME" --parameter-overrides FQDN=$FQDN
+    - aws cloudformation deploy --region us-east-1 --no-fail-on-empty-changeset --template ingress-certificate-template.yml --stack-name "$INGRESS_CERTIFICATE_STACK_NAME" --parameter-overrides Domain=$DOMAIN FQDN=$FQDN AlternativeNames=$ALTERNATIVE_NAMES
+
+package:
+  when: manual
+  image: docker:19.03.13
+  stage: package
+  services:
+    - docker:19.03.13-dind
+  script:
+    - apk add --no-cache py-pip
+    - pip install awscli
+    - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_URL
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA -f dockerfile .
+    - docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $ECR_URL/$IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    - docker push $ECR_URL/$IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+
+deploy-wp:
+  when: manual
+  image: python:latest
+  stage: deploy-wp
+  needs: [ "package" ]
+  script:
+    - pip install awscli
+
+    - LOAD_BALANCER_DOMAIN=$(aws cloudformation describe-stacks --stack-name "$LOAD_BALANCER_CERTIFICATE_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDomain'].OutputValue" --output text)
+    - LOAD_BALANCER_CERTIFICATE=$(aws cloudformation describe-stacks --stack-name "$LOAD_BALANCER_CERTIFICATE_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerCertificate'].OutputValue" --output text)
+    - INGRESS_CERTIFICATE=$(aws cloudformation describe-stacks --region us-east-1 --stack-name "$INGRESS_CERTIFICATE_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='IngressCertificate'].OutputValue" --output text)
+    - aws cloudformation deploy --no-fail-on-empty-changeset --capabilities CAPABILITY_IAM --template wp-template.yml --stack-name "$WP_STACK_NAME" --parameter-overrides Domain=$DOMAIN FQDN=$FQDN AlternativeNames=$ALTERNATIVE_NAMES LoadBalancerDomain=$LOAD_BALANCER_DOMAIN IngressCertificate=$INGRESS_CERTIFICATE LoadBalancerCertificate=$LOAD_BALANCER_CERTIFICATE DockerImage="$ECR_URL/$IMAGE_NAME:$CI_COMMIT_SHORT_SHA" DBName=$DB_NAME DBUsername=$DB_USERNAME DBPassword=$DB_PASSWORD WordpressKeys=$WORDPRESS_KEYS
+
+    - CLUSTER_NAME=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue" --output text)
+    - SERVICE_NAME=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='ServiceName'].OutputValue" --output text)
+    - aws ecs update-service --cluster "$CLUSTER_NAME" --service "$SERVICE_NAME"
+    - aws ecs wait services-stable --cluster "$CLUSTER_NAME" --service "$SERVICE_NAME"
+
+    - DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
+    - aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths /\*
+
+deploy-lambda:
+  when: manual
+  image: python:latest
+  stage: deploy-lambda
+  script:
+    - pip install awscli
+
+    - SECURITY_GROUPS_REGION=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='SecurityGroupsRegion'].OutputValue" --output text)
+    - GLOBAL_SECURITY_GROUP_ID=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='GlobalSecurityGroupId'].OutputValue" --output text)
+    - REGIONAL_SECURITY_GROUP_ID=$(aws cloudformation describe-stacks --stack-name "$WP_STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='RegionalSecurityGroupId'].OutputValue" --output text)
+
+    - aws cloudformation deploy --region us-east-1 --no-fail-on-empty-changeset --capabilities CAPABILITY_IAM --template lambda-template.yml --stack-name "$LAMBDA_STACK_NAME" --parameter-overrides SecurityGroupsRegion=$SECURITY_GROUPS_REGION GlobalSecurityGroupId=$GLOBAL_SECURITY_GROUP_ID RegionalSecurityGroupId=$REGIONAL_SECURITY_GROUP_ID

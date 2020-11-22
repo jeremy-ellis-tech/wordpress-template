@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  Domain:
+    Type: String
+    Description: The domain portion of the FQDN. eg. example.com
+  FQDN:
+    Type: String
+    Description: >-
+      The fully qualified domain name. This might just be the domain if you
+      aren't using a subdomain for the FQDN.
+  AlternativeNames:
+    Type: CommaDelimitedList
+    Description: A list of alternative names to re-direct to the FQDN. eg. www.example.com
+Resources:
+  IngressCertificate:
+    Type: 'AWS::CertificateManager::Certificate'
+    Properties:
+      ValidationMethod: DNS
+      DomainName: !Ref FQDN
+      SubjectAlternativeNames: !Ref AlternativeNames
+Outputs:
+  IngressCertificate:
+    Description: Ingress certificate
+    Value: !Ref IngressCertificate

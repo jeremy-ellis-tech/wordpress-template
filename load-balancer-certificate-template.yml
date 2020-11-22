@@ -1,0 +1,24 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  FQDN:
+    Type: String
+    Description: >-
+      The fully qualified domain name. This might just be the domain if you
+      aren't using a subdomain for the FQDN.
+  LoadBalancerSubDomain:
+    Type: String
+    Description: Load balancer subdomain relative to FQDN
+    Default: lb
+Resources:
+  LoadBalancerCertificate:
+    Type: 'AWS::CertificateManager::Certificate'
+    Properties:
+      ValidationMethod: DNS
+      DomainName: !Sub '${LoadBalancerSubDomain}.${FQDN}'
+Outputs:
+  LoadBalancerDomain:
+    Description: Load balancer domain
+    Value: !Sub '${LoadBalancerSubDomain}.${FQDN}'
+  LoadBalancerCertificate:
+    Description: Load balancer Certificate
+    Value: !Ref LoadBalancerCertificate

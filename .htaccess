@@ -1,0 +1,26 @@
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+
+# Security headers
+
+<IfModule mod_headers.c>
+Header set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+Header set X-Frame-Options SAMEORIGIN
+Header set X-Content-Type-Options nosniff
+Header set X-XSS-Protection "1; mode=block"
+Header set Referrer-Policy no-referrer-when-downgrade
+Header set Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+
+Header always unset X-Powered-By
+Header unset X-Powered-By
+Header always unset Server
+Header unset Server
+</IfModule>
